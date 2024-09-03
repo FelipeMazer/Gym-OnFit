@@ -1,0 +1,295 @@
+import psycopg2
+
+from datetime import datetime
+
+import tkinter as tk 
+
+from tkinter import messagebox
+
+from tkinter import ttk
+
+
+conn = psycopg2.connect(
+dbname = 'academia',
+user = 'postgres',
+password = '*******',
+host = 'localhost',
+port = '5432'
+)
+
+cursor = conn.cursor()
+
+
+
+def formatar_nome(nome_completo):
+
+    partes = nome_completo.split(maxsplit=1)
+    
+    if len(partes) == 1:
+        
+        nome = partes[0]
+        sobrenome = ""
+    else:
+    
+        nome, sobrenome = partes
+        
+    return nome, sobrenome
+
+def formatar_telefone(telefone):
+    
+    telefone = ''.join(filter(str.isdigit, telefone))
+    
+    if len(telefone) == 11:
+        
+        return f"({telefone[:2]}) {telefone[2:7]}-{telefone[7:]}"
+    else:
+        
+        raise ValueError("Número de telefone inválido. Deve ter 11 dígitos.")
+
+def ad_aluno(nome_completo, telefone):
+    nome, sobrenome = formatar_nome(nome_completo)
+    
+    if telefone:
+
+     telefone_formatado = formatar_telefone(telefone)
+    else: 
+        telefone_formatado = None 
+    
+    cursor.execute('''
+        INSERT INTO alunos (nome, telefone)
+        VALUES (%s, %s)
+    ''', (f"{nome} {sobrenome}", telefone_formatado))
+    conn.commit()
+    messagebox.showinfo(f"Aluno {nome} adicionado com sucesso.")
+
+def telefone_alu():
+    nome = nome_entry.get()
+    telefone = telefone_entry.get()
+    try:
+        ad_aluno(nome,telefone)
+    except ValueError as e:
+        messagebox.showerror("Erro",str(e))    
+
+
+def obter_idaluno_por_nome(nome_completo):
+    cursor.execute(''' SELECT idaluno FROM alunos  WHERE LOWER(nome) = LOWER(%s)''',(nome_completo.strip(),))
+    resultado = cursor.fetchone()
+    if resultado:
+        return resultado[0]
+    else:
+        raise ValueError("Aluno não encontrado.")
+
+
+
+
+def converter_string_para_datetime(data_str): #O strptime converte uma string(data_str) em objeto
+    return datetime.strptime(data_str, '%d/%m/%Y')
+
+def formatar_data_para_postgres(data): #strftime é usada para formatar um objeto em uma string
+    return data.strftime('%Y-%m-%d')
+
+def adicionar_pagamento(nome_completo, valorpagamento, datapagamento_str, vencimentopagamento_str):
+
+    try:
+        idaluno = obter_idaluno_por_nome(nome_completo)
+        datapagamento = converter_string_para_datetime(datapagamento_str)
+        vencimentopagamento = converter_string_para_datetime(vencimentopagamento_str)
+         
+        datapagamento_formatada = formatar_data_para_postgres(datapagamento)
+        vencimentopagamento_formatada = formatar_data_para_postgres(vencimentopagamento)
+
+        cursor.execute(''' INSERT INTO pagamento (idaluno, valorpagamento, datapagamento, vencimentopagamento)
+                       VALUES (%s, %s, %s, %s)''',(idaluno, valorpagamento, datapagamento_formatada, vencimentopagamento_formatada,))
+        conn.commit()
+        messagebox.showinfo(f'Pagamento de {valorpagamento} adicionado para o aluno {nome_completo}.')
+    except ValueError as e:
+       messagebox.showinfo(f'Erro ao adicionar pagamento: {e}')        
+
+def adicionar_aluno():
+ nome = nome_entry.get()
+ telefone = telefone_entry.get()
+ ad_aluno(nome, telefone)
+
+
+def handle_adicionar_pagamento():
+    nome = nome_pagamento_entry.get()
+    valor = valor_pagamento_entry.get()
+    datapagamento = datapagamento_entry.get()
+    vencimentopagamento = vencimentopagamento_entry.get()
+    adicionar_pagamento(nome, valor, datapagamento, vencimentopagamento)
+
+
+
+
+def   formatar_data_on_focus_out(event):
+    texto = event.widget.get()
+
+    texto = ''.join(filter(str.isdigit, texto))
+
+    if len(texto) > 2:
+        texto = texto[:2] + '/' + texto[2:]
+    if len(texto) > 5:
+        texto = texto[:5] + '/' + texto[5:]  
+    if len(texto) > 10:
+        texto = texto [:10]      
+
+    if event.widget.get() != texto:    
+
+      event.widget.delete(0, tk.END)
+      event.widget.insert(0, texto)        
+
+def obter_alunos_e_pagamentos():
+    query = '''
+    SELECT a.nome, p.valorpagamento, p.datapagamento
+    FROM alunos a
+    LEFT JOIN pagamento p ON a.idaluno = p.idaluno
+    ORDER BY p.datapagamento, a.nome
+    '''
+
+    cursor.execute(query)
+    resultados = cursor.fetchall()
+
+    pagamentos_por_mes = {}
+
+    for aluno in resultados:
+        nome, valorpagamento, datapagamento = aluno
+        
+        if datapagamento:
+            if isinstance(datapagamento, str):
+                datapagamento = datetime.strptime(datapagamento, '%Y-%m-%d').date()
+            mes_ano = datapagamento.strftime('%Y-%m')  
+
+            if mes_ano not in pagamentos_por_mes:
+                pagamentos_por_mes[mes_ano] = []
+
+            pagamentos_por_mes[mes_ano].append((nome, valorpagamento, datapagamento.strftime('%d/%m/%Y')))
+
+    return pagamentos_por_mes
+    
+  
+
+
+
+def obter_nome_mes(mes_numero):
+    meses = {
+        '01': 'Janeiro',
+        '02': 'Fevereiro',
+        '03': 'Março',
+        '04': 'Abril',
+        '05': 'Maio',
+        '06': 'Junho',
+        '07': 'Julho',
+        '08': 'Agosto',
+        '09': 'Setembro',
+        '10': 'Outubro',
+        '11': 'Novembro',
+        '12': 'Dezembro'
+    }
+    return meses.get(mes_numero, 'Desconhecido')
+
+
+def exibir_lista():
+    def pesquisar_aluno():
+        nome_pesquisa = entry_pesquisa.get().strip().lower()
+        for widget in frame.winfo_children():
+            widget.pack_forget()  
+        
+    
+        for mes_ano, pagamentos in pagamentos_por_mes.items():
+            mes_numero = mes_ano.split('-')[1]
+            nome_mes = obter_nome_mes(mes_numero)
+            
+            frame_mes = tk.Frame(frame, borderwidth=2, relief='solid')
+            frame_mes.pack(fill='x', pady=10, padx=10)
+
+            tk.Label(frame_mes, text=nome_mes, font=('Arial', 12, 'bold')).grid(row=0, column=0, pady=5, padx=10, sticky='nsew')
+
+            for i, pagamento in enumerate(pagamentos, start=1):
+                nome_aluno = pagamento[0].strip().lower()
+                if nome_pesquisa in nome_aluno:
+                    pagamento_texto = f"Nome: {pagamento[0]} || Pago: R${pagamento[1]} || Data do Pagamento: {pagamento[2]}"
+                    tk.Label(frame_mes, text=pagamento_texto, font=('Arial', 16)).grid(row=i, column=0, pady=5, padx=10, sticky='w')
+
+                    # Linha de separação personalizada usando Canvas
+                    separator = tk.Canvas(frame_mes, height=2, bg='black', bd=0, highlightthickness=0)
+                    separator.grid(row=i + 1, column=0, pady=5, padx=10, sticky='ew')
+
+            frame_mes.columnconfigure(0, weight=1)
+
+    pagamentos_por_mes = obter_alunos_e_pagamentos()
+
+    lista_window = tk.Toplevel(root)
+    lista_window.title("Lista de Alunos e Pagamentos")
+
+    canvas = tk.Canvas(lista_window)
+    scroll_y = tk.Scrollbar(lista_window, orient="vertical", command=canvas.yview)
+    frame = tk.Frame(canvas)
+
+    frame.bind(
+        "<Configure>",
+        lambda e: canvas.configure(
+            scrollregion=canvas.bbox("all")
+        )
+    )
+
+    canvas.create_window((0, 0), window=frame, anchor="nw")
+    canvas.configure(yscrollcommand=scroll_y.set)
+
+    canvas.pack(side="left", fill="both", expand=True)
+    scroll_y.pack(side="right", fill="y")
+
+    
+    frame_pesquisa = tk.Frame(lista_window)
+    frame_pesquisa.pack(fill='x', padx=10, pady=5)
+    tk.Label(frame_pesquisa, text="Pesquisar aluno:").pack(side='left')
+    entry_pesquisa = tk.Entry(frame_pesquisa)
+    entry_pesquisa.pack(side='left', fill='x', expand=True)
+    tk.Button(frame_pesquisa, text="Buscar", command=pesquisar_aluno).pack(side='right')
+
+    
+    pesquisar_aluno()
+
+    lista_window.mainloop()
+
+
+root = tk.Tk()
+
+root.title('Academia OnFit')    
+
+tk.Label(root, text='Nome Completo: ').grid(row=0, column=0)
+nome_entry = tk.Entry(root)
+nome_entry.grid(row=0, column=1)
+
+tk.Label(root, text='Telefone: ').grid(row=1, column=0)
+telefone_entry = tk.Entry(root)
+telefone_entry.grid(row=1, column=1)
+
+tk.Button(root, text='Adicionar Aluno', command= adicionar_aluno).grid(row=2, column=0, columnspan=2)
+
+
+tk.Label(root, text='Nome Completo (Pagamento): ').grid(row=3, column=0)
+nome_pagamento_entry = tk.Entry(root)
+nome_pagamento_entry.grid(row=3, column=1)
+
+tk.Label(root, text='Valor pagamento: ').grid(row=4, column = 0)
+valor_pagamento_entry = tk.Entry(root)
+valor_pagamento_entry.grid(row=4, column=1)
+
+tk.Label(root, text='Data do pagamento: ').grid(row=5, column=0)
+datapagamento_entry = tk.Entry(root)
+datapagamento_entry.grid(row=5, column=1)
+
+tk.Label(root, text='Data de vencimento: ').grid(row=6, column=0)
+vencimentopagamento_entry = tk.Entry(root)
+vencimentopagamento_entry.grid(row=6, column=1)
+
+tk.Button(root, text='Adicionar pagamento',command=handle_adicionar_pagamento).grid(row=7, column=0, columnspan=2)
+
+tk.Button(root, text='Mostrar Lista de alunos e Pagamentos', command=exibir_lista).grid(row=8,column=0, columnspan=2)
+
+datapagamento_entry.bind('<FocusOut>', formatar_data_on_focus_out)
+vencimentopagamento_entry.bind('<FocusOut>', formatar_data_on_focus_out)
+root.mainloop()
+
+cursor.close()
+conn.close()
